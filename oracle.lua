@@ -8,8 +8,6 @@ ADMIN_ADDRESS = 'jSi6j6uTthM2xIZfAFmirxbvGo0tskDsGavrrnj5qVY'
 local json = require('json')
 local sqlite3 = require('lsqlite3')
 
-Llama = Llama or nil
-
 LLAMA_TOKEN_DENOMINATION = 12
 LLAMA_TOKEN_MULTIPLIER = 10 ^ LLAMA_TOKEN_DENOMINATION
 MIN_BET = 1
@@ -18,6 +16,17 @@ MIN_BET_QUANTITY = MIN_BET * LLAMA_TOKEN_MULTIPLIER
 MAX_BET_QUANTITY = MAX_BET * LLAMA_TOKEN_MULTIPLIER
 
 CACHE_PROCESS_BALANCE = 0
+
+function RefreshProcessBalance()
+  Send({
+    Target = LLAMA_TOKEN_PROCESS,
+    Tags = {
+      Action = 'Balance',
+      Account = ao.id,
+    },
+  })
+end
+
 RefreshProcessBalance()
 
 JokerDb = JokerDb or sqlite3.open_memory()
@@ -41,15 +50,13 @@ end
 JokerInitialized = JokerInitialized or false
 if (not JokerInitialized) then
   InitDb()
-  Llama = require('@sam/Llama-Herder')
-  Llama.getPrices()
   JokerInitialized = true
 end
 
 
 
 function FormatLlamaTokenAmount(amount)
-  return string.format("%.10f", amount / LLAMA_TOKEN_MULTIPLIER)
+  return string.format("%.2f", amount / LLAMA_TOKEN_MULTIPLIER)
 end
 
 function DispatchJokeMessage(jokeTopic)
@@ -85,15 +92,16 @@ Handlers.add(
     local topic = msg.Tags['X-JokeTopic']
 
     local quantity = tonumber(msg.Tags.Quantity)
-    if not ValidateLlamaQuantity(quantity) then
-      Send ({
+    if not ValidateBetQuantity(quantity) then
+      Send({
         Target = CHAT_TARGET,
         Tags = {
           Action = 'ChatMessage',
           ['Author-Name'] = 'Oracle Llama',
           Recipient = sender,
         },
-        Data = "Invalid quantity, the ancient llama spirits are displeased, the quantity must between " .. MIN_BET .. " and " .. MAX_BET .. " $LLAMA",
+        Data = "Invalid quantity, the ancient llama spirits are displeased, the quantity must between " ..
+            MIN_BET .. " and " .. MAX_BET .. " $LLAMA",
       })
       RefundBet(sender, quantity)
       return print("Invalid quantity")
@@ -101,20 +109,20 @@ Handlers.add(
 
     local jokeTopic = msg.Tags['X-JokeTopic']
     print(jokeTopic)
-    if not ValidateJokeTopic(jokeTopic) then
+    if not ValidateChoice(jokeTopic) then
       return print("Invalid vote")
     end
 
     -- Save metadata
     local stmt = JokerDb:prepare [[
       INSERT INTO LlamaCredit
-      (MessageId, Timestamp, Sender, Quantity, JokeTopic)
+      (MessageId, Timestamp, Sender, Quantity, Choice)
       VALUES (?, ?, ?, ?, ?)
     ]]
     stmt:bind_values(messageId, msg.Timestamp, sender, quantity, jokeTopic)
     stmt:step()
     stmt:finalize()
-    
+
 
     -- Write in Chat
     Send({
@@ -124,7 +132,8 @@ Handlers.add(
         ['Author-Name'] = 'Oracle Llama',
         Recipient = sender,
       },
-      Data = "High or Low, good question~ The spirits of the ancient llamas whisper... but they're a bit hoarse today. Ah, I see you seek the wisdom of High and Low. Let me consult my crystal hay bale...",
+      Data =
+      "High or Low, good question~ The spirits of the ancient llamas whisper... but they're a bit hoarse today. Ah, I see you seek the wisdom of High and Low. Let me consult my crystal hay bale...",
     })
 
     if topic then
@@ -177,7 +186,6 @@ function BetSchemaTags()
 ]]
 end
 
-
 function AdminchemaTags()
   return [[
 {
@@ -206,7 +214,6 @@ function AdminchemaTags()
 }
 ]]
 end
-
 
 Handlers.add(
   'TokenBalanceResponse',
@@ -248,9 +255,11 @@ Handlers.add(
         Data = json.encode({
           AskOracleLlama = {
             Target = LLAMA_TOKEN_PROCESS,
-            Title = "Welcome to Madame Baa-Baa's Wooly Wisdom Hut! I'm the Ovine Oracle, seer of Highs and Lows. Peer into my mystic eyes (rectangular pupils? Pure flair!) and test your fleece-tiny! Will you scale Ewe-verest or tumble into Shear Despair? Make a wish, brave lambkin - may ancient sheep spirits guide you!",
+            Title =
+            "Welcome to Madame Baa-Baa's Wooly Wisdom Hut!",
             Description = string.format(
-              "Your balance: %s $LLAMA\n", FormatLlamaTokenAmount(balance)
+              "I'm the Ovine Oracle, seer of Highs and Lows. Peer into my mystic eyes (rectangular pupils? Pure flair!) and test your fleece-tiny! Will you scale Ewe-verest or tumble into Shear Despair? Make a wish, brave lambkin - may ancient sheep spirits guide you! \nYour balance: %s $LLAMA\n",
+              FormatLlamaTokenAmount(balance)
             ),
             Schema = {
               Tags = json.decode(BetSchemaTags()),
@@ -290,18 +299,22 @@ function RefundBet(sender, quantity)
       Quantity = tostring(quantity),
     },
   })
-  SendErrorMessage(sender, string.format("Oh dear %s! The cosmic scales reject your offering! It seems your bet has angered the ancient llama spirits. Fear not, for they are merciful and have decreed a full refund. Perhaps try again with a number that doesn't make them spit?", tostring(sender)))
-  end
+  SendErrorMessage(sender,
+    string.format(
+      "Oh dear %s! The cosmic scales reject your offering! It seems your bet has angered the ancient llama spirits. Fear not, for they are merciful and have decreed a full refund. Perhaps try again with a number that doesn't make them spit?",
+      tostring(sender)))
+end
 
 function ValidateBetQuantity(quantity)
   local res = quantity ~= nil and quantity >= MIN_BET_QUANTITY and quantity <= MAX_BET_QUANTITY
-  print('Quantity is ' .. tostring(FormatLlamaTokenAmount(quantity)) .. ', ValidateBetQuantity result is ' .. tostring(res))
+  print('Quantity is ' ..
+    tostring(FormatLlamaTokenAmount(quantity)) .. ', ValidateBetQuantity result is ' .. tostring(res))
   return res
 end
 
 function ValidateChoice(choice)
   local res = choice == 'High' or choice == 'Low'
-  print('choice is ' .. tostring(choice) .. ', ValidateChoice result is ' .. tostring(res))	
+  print('choice is ' .. tostring(choice) .. ', ValidateChoice result is ' .. tostring(res))
   return res
 end
 
@@ -313,9 +326,10 @@ function ProcessGame(sender, betAmount, choice)
   print('Bet amount: ' .. FormatLlamaTokenAmount(betAmount))
   print('Sender: ' .. sender)
   if won then
-    local winAmount = math.floor(betAmount * 1.5)  -- 50% profit
-    resultMessage = string.format("%s, By the whiskers of the great llama in the sky! Your clairvoyance rivals my own! You wagered %s $LLAMA on the mystical path of %s, and the universe has smiled upon you with a bountiful %s $LLAMA! Quick, buy a lottery ticket before your luck runs out!",
-                                  sender,FormatLlamaTokenAmount(betAmount), choice, FormatLlamaTokenAmount(winAmount))
+    local winAmount = math.floor(betAmount * 1.5) -- 50% profit
+    resultMessage = string.format(
+      "%s, By the whiskers of the great llama in the sky! Your clairvoyance rivals my own! You wagered %s $LLAMA on the mystical path of %s, and the universe has smiled upon you with a bountiful %s $LLAMA! Quick, buy a lottery ticket before your luck runs out!",
+      sender, FormatLlamaTokenAmount(betAmount), choice, FormatLlamaTokenAmount(winAmount))
     Send({
       Target = LLAMA_TOKEN_PROCESS,
       Tags = {
@@ -326,10 +340,11 @@ function ProcessGame(sender, betAmount, choice)
     })
     print('Transfered ' .. FormatLlamaTokenAmount(winAmount) .. ' to ' .. sender)
   else
-    resultMessage = string.format("%s, Alas, brave soul! The fickle fingers of fate have fumbled. You offered %s $LLAMA to the altar of chance, choosing the path of %s, but the cosmic dartboard landed on %s. Don't despair! In the grand tapestry of the universe, this is but a tiny, llama-shaped hole. May your future endeavors be filled with more hay... I mean, success!",
-                                  sender,FormatLlamaTokenAmount(betAmount), choice, result)
+    resultMessage = string.format(
+      "%s, Alas, brave soul! The fickle fingers of fate have fumbled. You offered %s $LLAMA to the altar of chance, choosing the path of %s, but the cosmic dartboard landed on %s. Don't despair! In the grand tapestry of the universe, this is but a tiny, llama-shaped hole. May your future endeavors be filled with more hay... I mean, success!",
+      sender, FormatLlamaTokenAmount(betAmount), choice, result)
   end
-  
+
   Send({
     Target = CHAT_TARGET,
     Tags = {
@@ -338,7 +353,7 @@ function ProcessGame(sender, betAmount, choice)
     },
     Data = resultMessage,
   })
-  
+
   -- Refresh the game form for the user
   Send({
     Target = LLAMA_TOKEN_PROCESS,
@@ -359,7 +374,7 @@ function SendErrorMessage(account, message)
     },
     Data = message,
   })
-  
+
   -- Refresh the game form for the user
   Send({
     Target = LLAMA_TOKEN_PROCESS,
@@ -383,7 +398,6 @@ function SendWaitingMessage(account)
     })
   })
 end
-
 
 Handlers.add(
   'SchemaExternal',
@@ -416,13 +430,3 @@ Handlers.add(
     })
   end
 )
-
-function RefreshProcessBalance()
-  Send({
-    Target = LLAMA_TOKEN_PROCESS,
-    Tags = {
-      Action = 'Balance',
-      Account = ao.id,
-    },
-  })
-end
